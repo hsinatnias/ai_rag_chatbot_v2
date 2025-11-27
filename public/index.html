@@ -1,0 +1,32 @@
+<!-- public/index.html -->
+<!doctype html>
+<html>
+<head><meta charset="utf-8"><title>RAG Chat</title></head>
+<body>
+  <div>
+    <label>Language:
+      <select id="lang">
+        <option value="ja" selected>JA</option>
+        <option value="en">EN</option>
+      </select>
+    </label>
+  </div>
+  <div id="chat"></div>
+  <input id="q" placeholder="Ask..." />
+  <button id="send">Send</button>
+
+<script>
+async function ask(){
+  const q = document.getElementById("q").value;
+  const lang = document.getElementById("lang").value;
+  const res = await fetch('/api/chat/query', {
+    method:'POST', headers:{'Content-Type':'application/json'},
+    body: JSON.stringify({text:q, lang})
+  });
+  const j = await res.json();
+  document.getElementById('chat').innerText += "\\nUser: "+q+"\\nBot: "+j.answer+"\\n";
+}
+document.getElementById('send').onclick = ask;
+</script>
+</body>
+</html>

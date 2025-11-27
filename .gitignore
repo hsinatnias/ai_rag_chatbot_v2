@@ -1,0 +1,46 @@
+# Python
+__pycache__/
+*.py[cod]
+*.pyo
+*.pyd
+env/
+.venv/
+venv/
+.Python
+pip-wheel-metadata/
+*.egg-info/
+
+# Byte-compiled / caches
+.eggs/
+dist/
+build/
+
+# VSCode
+.vscode/
+
+# OS
+.DS_Store
+Thumbs.db
+
+# SQLite DB and data
+/data/
+data/
+*.db
+
+# Logs, env files
+*.log
+.env
+.env.local
+.env.*.local
+
+# Pytest cache
+.pytest_cache/
+
+# Node (if you add front-end)
+node_modules/
+npm-debug.log
+yarn-debug.log
+yarn-error.log
+
+# Zip / archives
+*.zip

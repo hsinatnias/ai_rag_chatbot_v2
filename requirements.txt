@@ -1,0 +1,9 @@
+fastapi
+uvicorn[standard]
+aiosqlite
+passlib[bcrypt]
+python-multipart    # if you later accept file uploads
+aioredis            # if you move sessions/cache to redis later
+qdrant-client       # when you add qdrant code
+httpx               # for ollama calls later
+secrets             # for session token generation
