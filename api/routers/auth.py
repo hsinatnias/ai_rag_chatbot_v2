@@ -2,7 +2,9 @@
 from fastapi import APIRouter, Response, Request, HTTPException, Depends
 from pydantic import BaseModel
 import uuid
+from auth.deps import require_user
 from auth.sessions import create_session, delete_session, get_session
+from config.settings import settings
 from db import users as user_db
 from core.utils import logger as event_logger
 
@@ -41,7 +43,7 @@ async def login(req: LoginRequest, resp: Response, request: Request):
         key="session_id",
         value=sid,
         httponly=True,
-        secure=False,        # set True in production when running over HTTPS
+        secure=settings.SECURE_COOKIE,
         samesite="lax",
         max_age=60*60*24     # 1 day TTL (seconds)
     )
@@ -89,3 +91,10 @@ async def register(req: RegisterRequest):
     await user_db.create_user(user_id, req.username, req.password, role="user")
     await event_logger.log_action(user_id, "AUTH_REGISTER", {"username": req.username})
     return {"ok": True, "user_id": user_id}
+
+@router.get("/whoami")
+async def whoami(user = Depends(require_user)):
+    """
+    Returns info about the currently authenticated user.
+    """
+    return {"user_id": user["user_id"], "username": user["username"], "role": user["role"]}

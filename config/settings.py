@@ -6,9 +6,10 @@ class Settings(BaseSettings):
     QDRANT_URL: str = os.getenv("QDRANT_URL", "http://127.0.0.1:6333")
     QDRANT_COLLECTION: str = os.getenv("QDRANT_COLLECTION", "kb_chunks")
     OLLAMA_URL: str = os.getenv("OLLAMA_URL", "http://127.0.0.1:11434")
-    LLM_MODEL: str = os.getenv("LLM_MODEL", "gemma3:4b")
+    LLM_MODEL: str = os.getenv("LLM_MODEL", "gemma3:4B")
     EMBED_MODEL: str = os.getenv("EMBED_MODEL", "intfloat/multilingual-e5-small")
     TOP_K: int = int(os.getenv("TOP_K", 6))
+    SECURE_COOKIE: bool = False
 
     class Config:
         env_file = ".env"

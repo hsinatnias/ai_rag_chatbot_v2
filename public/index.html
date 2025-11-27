@@ -1,32 +1,549 @@
-<!-- public/index.html -->
 <!doctype html>
-<html>
-<head><meta charset="utf-8"><title>RAG Chat</title></head>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width,initial-scale=1" />
+  <title>RAG Chat — Demo</title>
+  <style>
+    :root { --max-width: 1100px; --accent: #2b6cb0; --muted: #666; --danger: #b00020; --success: #1b7a1b; }
+    body { font-family: system-ui, -apple-system, "Segoe UI", Roboto, Arial; max-width:var(--max-width); margin:20px auto; padding:0 12px; color:#111; }
+    header { display:flex; justify-content:space-between; align-items:center; margin-bottom:12px; }
+    h1 { margin:0; font-size:1.25rem; }
+    section { border:1px solid #eee; padding:16px; border-radius:8px; box-shadow:0 2px 6px rgba(0,0,0,0.04); margin-bottom:16px; background:#fff; }
+    .hidden { display:none; }
+    label { display:block; margin-bottom:8px; }
+    input, select, textarea { width:100%; padding:8px; margin-top:4px; box-sizing:border-box; border:1px solid #ddd; border-radius:6px; }
+    button { padding:8px 12px; margin-top:8px; border-radius:6px; border:1px solid rgba(0,0,0,0.08); background:#fff; cursor:pointer; }
+    button.primary { background:var(--accent); color:white; border-color:rgba(0,0,0,0.08); }
+    #messages { white-space:pre-wrap; border-top:1px dashed #eee; padding-top:12px; margin-top:12px; min-height:80px; }
+    .muted { color:var(--muted); font-size:0.95rem; }
+    pre { background:#f8f8f8; padding:8px; border-radius:6px; overflow:auto; }
+    .row { display:flex; gap:8px; align-items:center; }
+    .col { display:flex; flex-direction:column; gap:8px; }
+    .small { font-size:0.9rem; color:var(--muted); }
+    .success { color: var(--success); }
+    .error { color: var(--danger); }
+
+    /* Admin layout */
+    .admin-wrap { display:flex; gap:16px; }
+    .admin-menu { width:220px; border-right:1px solid #eee; padding-right:12px; }
+    .admin-menu button { width:100%; text-align:left; display:block; background:transparent; padding:10px 12px; margin-bottom:6px; border-radius:6px; border:1px solid transparent; }
+    .admin-menu button.active { background:#f0f7ff; border-color:rgba(43,108,176,0.15); color:var(--accent); font-weight:600; }
+    .admin-content { flex:1; }
+
+    /* Responsive */
+    @media (max-width:900px) {
+      .admin-wrap { flex-direction:column; }
+      .admin-menu { width:auto; border-right:none; padding-right:0; display:flex; gap:8px; overflow:auto; }
+      .admin-menu button { width:auto; white-space:nowrap; }
+    }
+  </style>
+</head>
 <body>
-  <div>
-    <label>Language:
+  <header>
+    <h1>RAG Chat — Demo</h1>
+    <div id="topUser" class="muted">Not signed in</div>
+  </header>
+
+  <!-- LOGIN -->
+  <section id="login">
+    <h2>Login</h2>
+    <div id="loginError" class="error"></div>
+    <label>Username
+      <input id="username" placeholder="admin" />
+    </label>
+    <label>Password
+      <input id="password" type="password" placeholder="adminpass" />
+    </label>
+    <div class="row">
+      <button id="btnLogin" class="primary">Login</button>
+      <div class="small muted">Use admin/adminpass for admin access.</div>
+    </div>
+  </section>
+
+  <!-- CHAT -->
+  <section id="chat" class="hidden">
+    <div style="display:flex;justify-content:space-between;align-items:center">
+      <div>
+        <strong id="whoami">—</strong>
+      </div>
+      <div>
+        <button id="btnLogout">Logout</button>
+      </div>
+    </div>
+
+    <label>Language
       <select id="lang">
         <option value="ja" selected>JA</option>
         <option value="en">EN</option>
       </select>
     </label>
-  </div>
-  <div id="chat"></div>
-  <input id="q" placeholder="Ask..." />
-  <button id="send">Send</button>
+
+    <label>Ask a question
+      <input id="q" placeholder="Type your question..." />
+    </label>
+    <div class="row">
+      <button id="btnSend" class="primary">Send</button>
+      <div id="chatStatus" class="small muted">Ready</div>
+    </div>
+
+    <div id="messages" class="muted">No messages yet.</div>
+  </section>
+
+  <!-- ADMIN (menu + content) -->
+  <section id="admin" class="hidden">
+    <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:12px">
+      <div>
+        <strong id="whoami_admin">—</strong>
+        <div class="muted">Admin interface</div>
+      </div>
+      <div>
+        <button id="btnLogoutAdmin">Logout</button>
+      </div>
+    </div>
+
+    <div class="admin-wrap">
+      <nav class="admin-menu" aria-label="Admin menu">
+        <button data-pane="overview" class="active">Overview</button>
+        <button data-pane="upload">Upload & Ingest</button>
+        <button data-pane="modules">Modules</button>
+        <button data-pane="logs">Logs</button>
+        <button data-pane="users">Users</button>
+      </nav>
+
+      <div class="admin-content">
+        <!-- Overview pane -->
+        <div id="pane-overview">
+          <h3>Overview</h3>
+          <div id="overviewSummary" class="muted">
+            <div>Modules: <span id="overviewModules">—</span></div>
+            <div>Last action: <span id="overviewLastAction">—</span></div>
+          </div>
+        </div>
+
+        <!-- Upload pane -->
+        <div id="pane-upload" class="hidden">
+          <h3>Upload & Ingest</h3>
+          <div id="uploadError" class="error"></div>
+          <label>Module name (existing or new)
+            <input id="uploadModule" placeholder="module_name" />
+          </label>
+          <label>Language
+            <select id="uploadLang">
+              <option value="ja" selected>JA</option>
+              <option value="en">EN</option>
+            </select>
+          </label>
+          <label>File
+            <input id="uploadFile" type="file" />
+          </label>
+          <div class="row">
+            <button id="btnUpload" class="primary">Upload & Ingest</button>
+            <div id="uploadStatus" class="small muted">Idle</div>
+          </div>
+          <div id="uploadResult" style="margin-top:12px"></div>
+        </div>
+
+        <!-- Modules pane -->
+        <div id="pane-modules" class="hidden">
+          <h3>Modules</h3>
+          <div class="row" style="margin-bottom:8px">
+            <button id="btnReloadModules">Refresh</button>
+            <div class="small muted">Click a module name to view files (if implemented).</div>
+          </div>
+          <div id="modulesList"><em>No modules loaded.</em></div>
+
+          <h4 style="margin-top:12px">Delete module</h4>
+          <label>Module name
+            <input id="delModuleName" placeholder="module_name" />
+          </label>
+          <div class="row">
+            <button id="btnDeleteModule">Delete Module</button>
+            <div id="deleteStatus" class="small muted"></div>
+          </div>
+        </div>
+
+        <!-- Logs pane -->
+        <div id="pane-logs" class="hidden">
+          <h3>Recent Logs</h3>
+          <div class="row" style="margin-bottom:8px">
+            <button id="btnViewLogs">Refresh Logs</button>
+            <div class="small muted">Showing latest 100 logs</div>
+          </div>
+          <div id="logsList"><em>No logs loaded.</em></div>
+        </div>
+
+        <!-- Users pane -->
+        <div id="pane-users" class="hidden">
+          <h3>Users (Admin)</h3>
+          <div id="usersList"><em>User endpoints may not be implemented yet.</em></div>
+
+          <h4 style="margin-top:12px">Create user (dev only)</h4>
+          <label>Username <input id="newUserName" /></label>
+          <label>Password <input id="newUserPass" type="password" /></label>
+          <div class="row">
+            <button id="btnCreateUser">Create User</button>
+            <div id="createUserStatus" class="small muted"></div>
+          </div>
+        </div>
+
+      </div>
+    </div>
+  </section>
 
 <script>
-async function ask(){
-  const q = document.getElementById("q").value;
-  const lang = document.getElementById("lang").value;
-  const res = await fetch('/api/chat/query', {
-    method:'POST', headers:{'Content-Type':'application/json'},
-    body: JSON.stringify({text:q, lang})
+const apiBase = ""; // same-origin
+// global UI refs
+const loginEl = document.getElementById('login');
+const chatEl = document.getElementById('chat');
+const adminEl = document.getElementById('admin');
+const topUser = document.getElementById('topUser');
+const whoami = document.getElementById('whoami');
+const whoami_admin = document.getElementById('whoami_admin');
+const messages = document.getElementById('messages');
+
+// admin panes
+const panes = {
+  overview: document.getElementById('pane-overview'),
+  upload: document.getElementById('pane-upload'),
+  modules: document.getElementById('pane-modules'),
+  logs: document.getElementById('pane-logs'),
+  users: document.getElementById('pane-users')
+};
+let paneLoaded = { overview: false, upload: false, modules: false, logs: false, users: false };
+
+// util show/hide
+function show(el){ el.classList.remove('hidden'); }
+function hide(el){ el.classList.add('hidden'); }
+
+function setTopUserText(text){ topUser.innerText = text; }
+
+// show specific admin pane
+function activateAdminPane(name){
+  // menu active state
+  document.querySelectorAll('.admin-menu button').forEach(b => b.classList.toggle('active', b.dataset.pane === name));
+  // show/hide panes
+  Object.keys(panes).forEach(k => {
+    if (k === name) show(panes[k]); else hide(panes[k]);
   });
-  const j = await res.json();
-  document.getElementById('chat').innerText += "\\nUser: "+q+"\\nBot: "+j.answer+"\\n";
+  // lazy load pane if needed
+  if (!paneLoaded[name]) {
+    paneLoaded[name] = true;
+    switch(name){
+      case 'overview': loadOverview(); break;
+      case 'upload': /* nothing to preload */ break;
+      case 'modules': loadModules(); break;
+      case 'logs': loadLogs(); break;
+      case 'users': loadUsers(); break;
+    }
+  }
 }
-document.getElementById('send').onclick = ask;
+
+// attach menu
+document.querySelectorAll('.admin-menu button').forEach(b => {
+  b.addEventListener('click', () => activateAdminPane(b.dataset.pane));
+});
+
+// LOGIN flow
+document.getElementById('btnLogin').onclick = async () => {
+  document.getElementById('loginError').innerText = "";
+  const username = document.getElementById('username').value;
+  const password = document.getElementById('password').value;
+  try {
+    const res = await fetch(`${apiBase}/api/auth/login`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      credentials: 'same-origin',
+      body: JSON.stringify({ username, password })
+    });
+    const j = await res.json().catch(()=>null);
+    if (!res.ok) {
+      document.getElementById('loginError').innerText = (j && (j.detail || j.error)) || 'Login failed';
+      return;
+    }
+    const user = j.user;
+    setTopUserText(`${user.username} (${user.role})`);
+    if (user && user.role === 'admin') {
+      showAdmin(user);
+    } else {
+      showChat(user);
+    }
+  } catch (e) {
+    console.error(e);
+    document.getElementById('loginError').innerText = 'Network error';
+  }
+};
+
+async function doLogout(){
+  try { await fetch(`${apiBase}/api/auth/logout`, { method:'POST', credentials:'same-origin' }); } catch(e){/*ignore*/ }
+  setTopUserText('Not signed in');
+  await showLogin();
+}
+document.getElementById('btnLogout').onclick = doLogout;
+document.getElementById('btnLogoutAdmin').onclick = doLogout;
+
+// show chat/admin/login helpers
+async function showChat(user){
+  hide(loginEl); hide(adminEl); show(chatEl);
+  whoami.innerText = `Signed in as ${user.username} (${user.role})`;
+  setTopUserText(`${user.username} (${user.role})`);
+  messages.innerText = '';
+}
+function showAdmin(user){
+  hide(loginEl); hide(chatEl); show(adminEl);
+  whoami_admin.innerText = `Admin: ${user.username} (${user.role})`;
+  setTopUserText(`${user.username} (${user.role})`);
+  // default to overview pane
+  activateAdminPane('overview');
+}
+async function showLogin(){ hide(chatEl); hide(adminEl); show(loginEl); setTopUserText('Not signed in'); whoami.innerText = '—'; whoami_admin.innerText = '—'; }
+
+// CHAT handlers
+document.getElementById('btnSend').onclick = async () => {
+  const q = document.getElementById('q').value.trim();
+  if (!q) return;
+  const lang = document.getElementById('lang').value;
+  document.getElementById('chatStatus').innerText = 'Thinking...';
+  messages.innerText += `\nYou: ${q}\n`;
+  try {
+    const res = await fetch(`${apiBase}/api/chat/query`, {
+      method: 'POST',
+      headers: { 'Content-Type':'application/json' },
+      credentials: 'same-origin',
+      body: JSON.stringify({ text: q, lang })
+    });
+    const j = await res.json().catch(()=>null);
+    if (!res.ok) {
+      messages.innerText += `Bot: Error: ${ (j && (j.detail||j.error)) || JSON.stringify(j) }\n`;
+    } else {
+      messages.innerText += `Bot: ${j.answer}\n`;
+    }
+  } catch (e) {
+    messages.innerText += `Bot: Network error\n`;
+    console.error(e);
+  } finally {
+    document.getElementById('chatStatus').innerText = 'Ready';
+  }
+};
+
+// WHOAMI helper
+async function whoAmI(){
+  try {
+    const res = await fetch(`${apiBase}/api/auth/whoami`, { credentials:'same-origin' });
+    if (!res.ok) {
+      if ([401,403,404].includes(res.status)) return null;
+      throw new Error('HTTP ' + res.status);
+    }
+    return await res.json();
+  } catch (e) {
+    console.warn('whoAmI error', e);
+    return null;
+  }
+}
+
+// ---------------- Admin pane functions ----------------
+
+// Overview
+async function loadOverview(){
+  try {
+    const modulesResp = await fetch(`${apiBase}/api/admin/modules`, { credentials:'same-origin' });
+    if (!modulesResp.ok) { document.getElementById('overviewModules').innerText = '—'; return; }
+    const jm = await modulesResp.json();
+    const count = Array.isArray(jm.modules) ? jm.modules.length : (jm.modules ? jm.modules.length : 0);
+    document.getElementById('overviewModules').innerText = count;
+    // last action - get one recent log
+    const logsResp = await fetch(`${apiBase}/api/admin/logs?limit=1`, { credentials:'same-origin' });
+    if (!logsResp.ok) { document.getElementById('overviewLastAction').innerText = '—'; return; }
+    const jl = await logsResp.json();
+    if (Array.isArray(jl.logs) && jl.logs.length>0) {
+      document.getElementById('overviewLastAction').innerText = `${jl.logs[0].action_type} @ ${jl.logs[0].timestamp}`;
+    } else document.getElementById('overviewLastAction').innerText = '—';
+  } catch (e) {
+    console.warn('overview load', e);
+  }
+}
+
+// Upload
+const uploadFileEl = document.getElementById('uploadFile');
+const uploadModuleEl = document.getElementById('uploadModule');
+const uploadLangEl = document.getElementById('uploadLang');
+const uploadStatusEl = document.getElementById('uploadStatus');
+const uploadResultEl = document.getElementById('uploadResult');
+const uploadErrorEl = document.getElementById('uploadError');
+
+document.getElementById('btnUpload').onclick = async () => {
+  uploadErrorEl.innerText = '';
+  uploadResultEl.innerHTML = '';
+  const file = uploadFileEl.files[0];
+  const moduleName = uploadModuleEl.value.trim();
+  const lang = uploadLangEl.value || 'ja';
+  if (!file) { uploadErrorEl.innerText = 'Please select a file.'; return; }
+  if (!moduleName) { uploadErrorEl.innerText = 'Please enter a module name.'; return; }
+
+  const fd = new FormData();
+  fd.append('file', file);
+  fd.append('module', moduleName);
+  fd.append('lang', lang);
+
+  uploadStatusEl.innerText = 'Uploading...';
+  document.getElementById('btnUpload').disabled = true;
+
+  try {
+    const res = await fetch(`${apiBase}/api/admin/upload`, { method:'POST', credentials:'same-origin', body: fd });
+    const j = await res.json().catch(()=>null);
+    if (!res.ok) {
+      uploadErrorEl.innerText = (j && (j.detail || j.error)) || `Upload failed (${res.status})`;
+      uploadStatusEl.innerText = 'Idle';
+      return;
+    }
+    uploadStatusEl.innerText = 'Done';
+    uploadResultEl.innerHTML = `<div class="success">Upload succeeded</div><pre>${JSON.stringify(j.meta || j, null, 2)}</pre>`;
+    // refresh modules/logs/overview after upload
+    await loadModules();
+    await loadLogs();
+    await loadOverview();
+  } catch (e) {
+    uploadErrorEl.innerText = 'Network error: ' + e.message;
+  } finally {
+    document.getElementById('btnUpload').disabled = false;
+    setTimeout(()=> uploadStatusEl.innerText = 'Idle', 1200);
+  }
+};
+
+// Modules
+async function loadModules(){
+  const el = document.getElementById('modulesList');
+  el.innerHTML = '<em>Loading...</em>';
+  try {
+    const res = await fetch(`${apiBase}/api/admin/modules`, { credentials:'same-origin' });
+    if (!res.ok) { el.innerHTML = `<div class="error">Failed to load modules: ${res.status}</div>`; return; }
+    const j = await res.json();
+    const list = Array.isArray(j.modules) ? j.modules : [];
+    if (list.length === 0) { el.innerHTML = '<em>No modules</em>'; return; }
+    // render clickable module names
+    el.innerHTML = '<ul>' + list.map(m => {
+      const name = (typeof m === 'string') ? m : (m.module_name || JSON.stringify(m));
+      return `<li><a href="#" class="module-link" data-module="${name}">${name}</a></li>`;
+    }).join('') + '</ul>';
+    // attach click handlers (just example: show alert or future file list)
+    document.querySelectorAll('.module-link').forEach(a => {
+      a.addEventListener('click', (ev) => {
+        ev.preventDefault();
+        const mn = a.dataset.module;
+        alert('Module clicked: ' + mn + '\\n(Implement per-module file listing in a future task.)');
+      });
+    });
+  } catch (e) {
+    el.innerHTML = `<div class="error">Error: ${e.message}</div>`;
+  }
+}
+document.getElementById('btnReloadModules').onclick = () => loadModules();
+
+// Delete module
+document.getElementById('btnDeleteModule').onclick = async () => {
+  const name = document.getElementById('delModuleName').value.trim();
+  if (!name) return alert('Enter module name');
+  if (!confirm(`Delete module "${name}"? This will remove vectors and docs for that module.`)) return;
+  const statusEl = document.getElementById('deleteStatus');
+  statusEl.innerText = 'Deleting...';
+  try {
+    const res = await fetch(`${apiBase}/api/admin/module/${encodeURIComponent(name)}`, { method:'DELETE', credentials:'same-origin' });
+    if (!res.ok) {
+      const j = await res.json().catch(()=>({detail:'error'}));
+      alert('Failed: ' + (j.detail || res.status));
+      statusEl.innerText = 'Idle';
+      return;
+    }
+    alert('Deleted');
+    await loadModules(); await loadLogs(); await loadOverview();
+    statusEl.innerText = 'Done';
+  } catch (e) {
+    alert('Network error: ' + e.message);
+    statusEl.innerText = 'Idle';
+  }
+};
+
+// Logs
+async function loadLogs(){
+  const el = document.getElementById('logsList');
+  el.innerHTML = '<em>Loading...</em>';
+  try {
+    const res = await fetch(`${apiBase}/api/admin/logs`, { credentials:'same-origin' });
+    if (!res.ok) { el.innerHTML = `<div class="error">Failed to load logs: ${res.status}</div>`; return; }
+    const j = await res.json();
+    const logs = Array.isArray(j.logs) ? j.logs : [];
+    if (logs.length === 0) { el.innerHTML = '<em>No logs</em>'; return; }
+    el.innerHTML = '<ol>' + logs.map(l => `<li><strong>${l.action_type}</strong> <span class="small muted">[${l.timestamp}]</span><pre>${typeof l.details==='string'?l.details:JSON.stringify(l.details,null,2)}</pre></li>`).join('') + '</ol>';
+  } catch (e) {
+    el.innerHTML = `<div class="error">Error: ${e.message}</div>`;
+  }
+}
+document.getElementById('btnViewLogs').onclick = () => loadLogs();
+
+// Users (placeholder)
+async function loadUsers(){
+  const el = document.getElementById('usersList');
+  el.innerHTML = '<em>Loading...</em>';
+  try {
+    // attempt to call a users endpoint if you have one
+    const res = await fetch(`${apiBase}/api/admin/users`, { credentials:'same-origin' });
+    if (!res.ok) {
+      el.innerHTML = '<em>User endpoints not implemented yet.</em>';
+      return;
+    }
+    const j = await res.json();
+    if (!Array.isArray(j.users) || j.users.length===0) { el.innerHTML = '<em>No users</em>'; return; }
+    el.innerHTML = '<ul>' + j.users.map(u => `<li>${u.username} (${u.role})</li>`).join('') + '</ul>';
+  } catch (e) {
+    el.innerHTML = '<em>User endpoints not implemented yet.</em>';
+  }
+}
+
+// Create user (dev only)
+document.getElementById('btnCreateUser').onclick = async () => {
+  const username = document.getElementById('newUserName').value.trim();
+  const password = document.getElementById('newUserPass').value;
+  const statusEl = document.getElementById('createUserStatus');
+  if (!username || !password) { statusEl.innerText = 'Enter username and password'; return; }
+  statusEl.innerText = 'Creating...';
+  try {
+    const res = await fetch(`${apiBase}/api/auth/register`, {
+      method: 'POST',
+      credentials: 'same-origin',
+      headers: {'Content-Type':'application/json'},
+      body: JSON.stringify({ username, password })
+    });
+    if (!res.ok) {
+      const j = await res.json().catch(()=>({detail:'error'}));
+      statusEl.innerText = 'Failed: ' + (j.detail || res.status);
+      return;
+    }
+    const j = await res.json();
+    statusEl.innerText = 'Created: ' + (j.user_id || '');
+    await loadUsers();
+  } catch (e) {
+    statusEl.innerText = 'Network error';
+  } finally {
+    setTimeout(()=> statusEl.innerText = '', 2500);
+  }
+};
+
+// ----------------- On load -----------------
+window.addEventListener('load', async () => {
+  try {
+    const me = await whoAmI();
+    if (me && me.username) {
+      if (me.role === 'admin') showAdmin(me);
+      else showChat(me);
+      setTopUserText(`${me.username} (${me.role})`);
+    } else {
+      await showLogin();
+    }
+  } catch (e) {
+    console.error(e);
+    await showLogin();
+  }
+});
 </script>
 </body>
 </html>
