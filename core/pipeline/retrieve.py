@@ -1,8 +1,30 @@
-from core.services.qdrant_service import search
+# core/pipeline/retrieve.py
+from typing import Optional, List, Any
+from core.services.qdrant_service import search_vectors
 from config.settings import settings
 
+def run_retrieval(
+    vector: List[float],
+    lang: Optional[str] = None,
+    top_k: Optional[int] = None,
+    module: Optional[str] = None
+) -> List[Any]:
+    """
+    Run retrieval using qdrant_service.search_vectors.
 
-def run_retrieval(vec, lang=None, top_k=None):
+    - vector: embedding vector of the query
+    - lang: preferred language code (e.g. 'ja' or 'en')
+    - top_k: override for number of hits
+    - module: optional module name to restrict search
+    """
     k = top_k or settings.TOP_K
-    # optional: add Filter by 'lang' field here (use qdrant Filter models)
-    return search(settings.QDRANT_COLLECTION, vec, limit=k)
+    # call the qdrant helper (synchronous)
+    hits = search_vectors(
+        collection=settings.QDRANT_COLLECTION,
+        vector=vector,
+        top_k=k,
+        module=module,
+        user_lang=lang,
+        with_payload=True
+    )
+    return hits

@@ -125,9 +125,12 @@
         <div id="pane-upload" class="hidden">
           <h3>Upload & Ingest</h3>
           <div id="uploadError" class="error"></div>
-          <label>Module name (existing or new)
-            <input id="uploadModule" placeholder="module_name" />
+          <label>Module name (choose or type new)
+            <input id="uploadModule" list="modulesDatalist" placeholder="module_name" autocomplete="off" />
+            <datalist id="modulesDatalist"></datalist>
+            <div class="small muted" id="moduleHint">Select an existing module or type a new one.</div>
           </label>
+
           <label>Language
             <select id="uploadLang">
               <option value="ja" selected>JA</option>
@@ -295,6 +298,8 @@ function showAdmin(user){
   setTopUserText(`${user.username} (${user.role})`);
   // default to overview pane
   activateAdminPane('overview');
+  // refresh module suggestions for upload input
+  refreshModuleDatalist().catch(()=>{});
 }
 async function showLogin(){ hide(chatEl); hide(adminEl); show(loginEl); setTopUserText('Not signed in'); whoami.innerText = '—'; whoami_admin.innerText = '—'; }
 
@@ -378,7 +383,7 @@ document.getElementById('btnUpload').onclick = async () => {
   const moduleName = uploadModuleEl.value.trim();
   const lang = uploadLangEl.value || 'ja';
   if (!file) { uploadErrorEl.innerText = 'Please select a file.'; return; }
-  if (!moduleName) { uploadErrorEl.innerText = 'Please enter a module name.'; return; }
+  if (!moduleName) { uploadErrorEl.innerText = 'Please enter or select a module name.'; return; }
 
   const fd = new FormData();
   fd.append('file', file);
@@ -400,6 +405,7 @@ document.getElementById('btnUpload').onclick = async () => {
     uploadResultEl.innerHTML = `<div class="success">Upload succeeded</div><pre>${JSON.stringify(j.meta || j, null, 2)}</pre>`;
     // refresh modules/logs/overview after upload
     await loadModules();
+    await refreshModuleDatalist();
     await loadLogs();
     await loadOverview();
   } catch (e) {
@@ -426,17 +432,153 @@ async function loadModules(){
       return `<li><a href="#" class="module-link" data-module="${name}">${name}</a></li>`;
     }).join('') + '</ul>';
     // attach click handlers (just example: show alert or future file list)
+    // (inside loadModules after setting el.innerHTML)
     document.querySelectorAll('.module-link').forEach(a => {
-      a.addEventListener('click', (ev) => {
+      a.addEventListener('click', async (ev) => {
         ev.preventDefault();
-        const mn = a.dataset.module;
-        alert('Module clicked: ' + mn + '\\n(Implement per-module file listing in a future task.)');
+        const moduleName = a.dataset.module;
+        const filesElId = `files-${moduleName.replace(/[^a-z0-9\-_]/gi,'_')}`;
+        let filesContainer = document.getElementById(filesElId);
+        // if already present toggle visibility
+        if (filesContainer) {
+          filesContainer.remove();
+          return;
+        }
+        // create placeholder
+        filesContainer = document.createElement('div');
+        filesContainer.id = filesElId;
+        filesContainer.innerHTML = '<em>Loading files...</em>';
+        a.parentElement.appendChild(filesContainer);
+
+        try {
+          const res = await fetch(`${apiBase}/api/admin/module/${encodeURIComponent(moduleName)}/files`, { credentials: 'same-origin' });
+          if (!res.ok) {
+            filesContainer.innerHTML = `<div class="error">Failed to load files: ${res.status}</div>`;
+            return;
+          }
+          const j = await res.json();
+          const files = Array.isArray(j.files) ? j.files : [];
+          if (files.length === 0) {
+            filesContainer.innerHTML = '<em>No files</em>';
+            return;
+          }
+          // render file list with actions
+          const ul = document.createElement('ul');
+          files.forEach(f => {
+            const li = document.createElement('li');
+            const nameSpan = document.createElement('span');
+            nameSpan.innerText = `${f.name} (${Math.round(f.size/1024)} KB)`;
+            li.appendChild(nameSpan);
+
+            // Reingest button
+            const reBtn = document.createElement('button');
+            reBtn.innerText = 'Re-ingest';
+            reBtn.style.marginLeft = '8px';
+            reBtn.onclick = async () => {
+              if (!confirm(`Re-ingest file "${f.name}" into module "${moduleName}"?`)) return;
+              reBtn.disabled = true; reBtn.innerText = 'Re-ingesting...';
+              try {
+                const r = await fetch(`${apiBase}/api/admin/module/${encodeURIComponent(moduleName)}/file/reingest`, {
+                  method: 'POST',
+                  credentials: 'same-origin',
+                  headers: { 'Content-Type': 'application/json' },
+                  body: JSON.stringify({ filename: f.name })
+                });
+                if (!r.ok) {
+                  const rr = await r.json().catch(()=>({detail:'error'}));
+                  alert('Re-ingest failed: ' + (rr.detail || r.status));
+                } else {
+                  alert('Re-ingest started / completed');
+                  await loadLogs();
+                }
+              } catch (e) {
+                alert('Network error: ' + e.message);
+              } finally {
+                reBtn.disabled = false; reBtn.innerText = 'Re-ingest';
+              }
+            };
+            li.appendChild(reBtn);
+
+            // Delete button
+            const delBtn = document.createElement('button');
+            delBtn.innerText = 'Delete';
+            delBtn.style.marginLeft = '6px';
+            delBtn.onclick = async () => {
+              if (!confirm(`Delete file "${f.name}" from module "${moduleName}"? This cannot be undone.`)) return;
+              delBtn.disabled = true; delBtn.innerText = 'Deleting...';
+              try {
+                const d = await fetch(`${apiBase}/api/admin/module/${encodeURIComponent(moduleName)}/file?name=${encodeURIComponent(f.name)}`, {
+                  method: 'DELETE',
+                  credentials: 'same-origin'
+                });
+                if (!d.ok) {
+                  const dd = await d.json().catch(()=>({detail:'error'}));
+                  alert('Delete failed: ' + (dd.detail || d.status));
+                } else {
+                  alert('Deleted');
+                  // remove list item from UI
+                  li.remove();
+                  await loadModules(); await loadLogs(); await loadOverview();
+                }
+              } catch (e) {
+                alert('Network error: ' + e.message);
+              } finally {
+                delBtn.disabled = false; delBtn.innerText = 'Delete';
+              }
+            };
+            li.appendChild(delBtn);
+
+            ul.appendChild(li);
+          });
+          filesContainer.innerHTML = '';
+          filesContainer.appendChild(ul);
+        } catch (e) {
+          filesContainer.innerHTML = `<div class="error">Error: ${e.message}</div>`;
+        }
       });
     });
+
   } catch (e) {
     el.innerHTML = `<div class="error">Error: ${e.message}</div>`;
   }
 }
+
+// Populate datalist for module suggestions
+async function refreshModuleDatalist() {
+  const datalist = document.getElementById('modulesDatalist');
+  const hint = document.getElementById('moduleHint');
+  // clear current options
+  datalist.innerHTML = '';
+  try {
+    const res = await fetch(`${apiBase}/api/admin/modules`, { credentials: 'same-origin' });
+    if (!res.ok) {
+      hint.innerText = 'Could not load modules';
+      return;
+    }
+    const j = await res.json();
+    const list = Array.isArray(j.modules) ? j.modules : [];
+    if (list.length === 0) {
+      hint.innerText = 'No modules yet — type a new module name to create one';
+    } else {
+      hint.innerText = `Choose existing or type new — ${list.length} modules available`;
+      // list may be array of strings or objects; normalize
+      list.forEach(m => {
+        const name = (typeof m === 'string') ? m : (m.module_name || m.name || '');
+        if (!name) return;
+        const opt = document.createElement('option');
+        opt.value = name;
+        datalist.appendChild(opt);
+      });
+    }
+  } catch (e) {
+    hint.innerText = 'Module list load error';
+    console.warn('refreshModuleDatalist error', e);
+  }
+}
+
+// call this when admin panes load, and after module changes
+// call it from loadModules() (after modules are fetched) and after successful upload or delete
+
 document.getElementById('btnReloadModules').onclick = () => loadModules();
 
 // Delete module
@@ -456,6 +598,7 @@ document.getElementById('btnDeleteModule').onclick = async () => {
     }
     alert('Deleted');
     await loadModules(); await loadLogs(); await loadOverview();
+    await refreshModuleDatalist();
     statusEl.innerText = 'Done';
   } catch (e) {
     alert('Network error: ' + e.message);

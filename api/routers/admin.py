@@ -1,10 +1,11 @@
 # api/routers/admin.py
-from fastapi import APIRouter, UploadFile, File, Form, Depends, HTTPException
+from fastapi import APIRouter, UploadFile, File, Form, Depends, HTTPException, Body, Query
 from auth.deps import require_admin
 from ingestion.ingest import ingest_file
 from core.utils import logger as event_logger
 from pathlib import Path
 import uuid, shutil, asyncio
+import os
 
 # DB helpers
 import db.modules as modules_db
@@ -16,7 +17,8 @@ from core.services import qdrant_service
 # config settings
 from config.settings import settings
 
-router = APIRouter(prefix="/api/admin", tags=["admin"], dependencies=[Depends(require_admin)])
+# Router: keep endpoints protected, but use endpoint-level admin Depends to access admin info
+router = APIRouter(prefix="/api/admin", tags=["admin"])
 
 @router.post("/upload")
 async def upload(file: UploadFile = File(...), module: str = Form(...), lang: str = Form("ja"), admin = Depends(require_admin)):
@@ -35,8 +37,18 @@ async def upload(file: UploadFile = File(...), module: str = Form(...), lang: st
     if not existing:
         await modules_db.create_module(module)
     # run ingestion (ingest_file should return metadata about upserted points)
-    metadata = await ingest_file(module, saved_path, lang=lang)
-
+    try:
+        # try with lang param, fall back if ingest_file signature differs
+        try:
+            metadata = await ingest_file(module, saved_path, lang=lang)
+        except TypeError:
+            metadata = await ingest_file(module, saved_path)
+    except TypeError:
+        # fallback for synchronous ingest_file
+        try:
+            metadata = ingest_file(module, saved_path, lang=lang)
+        except TypeError:
+            metadata = ingest_file(module, saved_path)
     # log action
     await event_logger.log_action(admin["user_id"], "UPLOAD_INGEST", {"module": module, "file": str(saved_path), "meta": metadata})
     return {"ok": True, "meta": metadata}
@@ -48,7 +60,6 @@ async def list_modules(admin = Depends(require_admin)):
     Return list of modules from DB.
     """
     mods = await modules_db.list_modules()
-    # return a simple list for the SPA (it supports array of strings or objects)
     return {"modules": mods}
 
 
@@ -58,14 +69,11 @@ async def recent_logs(admin = Depends(require_admin), limit: int = 100):
     Return recent logs (default limit 100).
     """
     rows = await logs_db.get_recent_logs(limit)
-    # Convert rows to JSON-friendly dicts if rows are tuples
     parsed = []
     for r in rows:
-        # r expected: (log_id, admin_id, action_type, details, timestamp)
         try:
             log_id, admin_id, action_type, details, timestamp = r
         except Exception:
-            # If get_recent_logs already returns dicts, try pass-through
             parsed.append(r)
             continue
         parsed.append({
@@ -120,3 +128,89 @@ async def delete_module(module_name: str, admin = Depends(require_admin)):
     # 4) log success
     await event_logger.log_action(admin["user_id"], "DELETE_MODULE", {"module": module_name})
     return {"ok": True, "module": module_name}
+
+
+# List files in a module
+@router.get("/module/{module_name}/files")
+async def list_module_files(module_name: str, admin = Depends(require_admin)):
+    """
+    Return list of files saved in docs/<module_name>.
+    """
+    docs_dir = Path("docs")
+    module_dir = docs_dir / module_name
+    if not module_dir.exists() or not module_dir.is_dir():
+        raise HTTPException(status_code=404, detail="Module not found")
+    files = []
+    for p in sorted(module_dir.iterdir(), key=lambda x: x.name):
+        if p.is_file():
+            files.append({
+                "name": p.name,
+                "path": str(p),
+                "size": p.stat().st_size,
+                "mtime": p.stat().st_mtime
+            })
+    return {"files": files}
+
+
+# Delete a single file inside a module
+@router.delete("/module/{module_name}/file")
+async def delete_module_file(module_name: str, name: str = Query(...), admin = Depends(require_admin)):
+    """
+    Delete a file under docs/<module_name>/<name>.
+    Query param: ?name=<filename>
+    """
+    docs_dir = Path("docs")
+    module_dir = docs_dir / module_name
+    if not module_dir.exists() or not module_dir.is_dir():
+        raise HTTPException(status_code=404, detail="Module not found")
+    target = (module_dir / name).resolve()
+    # prevent path traversal
+    if not str(target).startswith(str(module_dir.resolve())):
+        raise HTTPException(status_code=400, detail="Invalid filename")
+    if not target.exists() or not target.is_file():
+        raise HTTPException(status_code=404, detail="File not found")
+    try:
+        target.unlink()
+    except Exception as exc:
+        raise HTTPException(status_code=500, detail=f"Failed to delete file: {exc}")
+    # log action using event_logger (fixed variable name)
+    await event_logger.log_action(admin["user_id"], "DELETE_FILE", {"module": module_name, "file": name})
+    return {"ok": True, "file": name}
+
+
+# Re-ingest a saved file
+@router.post("/module/{module_name}/file/reingest")
+async def reingest_module_file(module_name: str, payload: dict = Body(...), admin = Depends(require_admin)):
+    """
+    Re-ingest a saved file present in docs/<module>/<filename>.
+    Body: {"filename": "<name>", "lang": "ja"}  # lang optional
+    """
+    filename = payload.get("filename")
+    lang = payload.get("lang", None)  # optional override
+    if not filename:
+        raise HTTPException(status_code=400, detail="filename required")
+
+    docs_dir = Path("docs")
+    module_dir = docs_dir / module_name
+    if not module_dir.exists() or not module_dir.is_dir():
+        raise HTTPException(status_code=404, detail="Module not found")
+
+    target = (module_dir / filename).resolve()
+    if not str(target).startswith(str(module_dir.resolve())):
+        raise HTTPException(status_code=400, detail="Invalid filename")
+    if not target.exists() or not target.is_file():
+        raise HTTPException(status_code=404, detail="File not found")
+
+    # determine language: prefer provided lang, else keep 'ja' default
+    use_lang = lang if lang else "ja"
+
+    try:
+        meta = await ingest_file(module_name, target, lang=use_lang)
+    except Exception as exc:
+        await event_logger.log_action(admin["user_id"], "REINGEST_FAILED", {"module": module_name, "file": filename, "error": str(exc)})
+        raise HTTPException(status_code=500, detail=f"Reingest failed: {exc}")
+
+    await event_logger.log_action(admin["user_id"], "REINGEST_FILE", {"module": module_name, "file": filename, "lang": use_lang})
+    return {"ok": True, "meta": meta}
+
+    return {"ok": True, "meta": meta}
