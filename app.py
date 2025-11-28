@@ -18,6 +18,15 @@ app.include_router(chat_router)
 app.include_router(admin_router)
 
 
+
+
+
+@app.get("/health")
+def health():
+    return {"ok": True}
+
+
+
 #Serves Single Page Application from ./public (index.html served at /)
 app.mount("/",StaticFiles(directory="public", html=True), name="public")
 
@@ -30,8 +39,3 @@ async def disable_html_caching(request: Request, call_next):
         resp.headers["Cache-Control"] = "no-store, no-cache, must-revalidate, max-age=0"
         resp.headers["Pragma"] = "no-cache"
     return resp
-
-
-@app.get("/health")
-def health():
-    return {"ok": True}

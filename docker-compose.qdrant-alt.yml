@@ -1,0 +1,12 @@
+services:
+  qdrant_alt:
+    image: qdrant/qdrant:latest
+    container_name: qdrant_alt
+    ports:
+      - "6334:6333"
+    volumes:
+      - qdrant_alt_storage:/qdrant/storage
+    restart: unless-stopped
+
+volumes:
+  qdrant_alt_storage:
